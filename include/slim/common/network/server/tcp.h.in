@@ -3,6 +3,7 @@
 #include <functional>
 #include <stop_token>
 #include <openssl/ssl.h>
+#include <slim/common/network/error_codes.h>
 #include <slim/common/io/runtime.h>
 #include <slim/common/io/scheduler.h>
 #include <slim/common/io/task.h>
@@ -25,9 +26,7 @@ class Tcp {
 public:
     using ConnectionHandler = std::function<slim::common::io::Task<void>(slim::common::io::Scheduler&, int, SSL_CTX*)>;
 
-    Tcp(const tcp::Config& config,
-        slim::common::io::Runtime& runtime,
-        std::stop_token stop_token,
+    Tcp(const tcp::Config& config, slim::common::io::Runtime& runtime, std::stop_token stop_token,
         ConnectionHandler connection_handler);
 
     ~Tcp();

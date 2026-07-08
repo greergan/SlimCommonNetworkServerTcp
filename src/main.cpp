@@ -2,7 +2,6 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <stdexcept>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <slim/common/io/operations.h>
@@ -15,10 +14,10 @@ namespace slim::common::network::server {
 
 namespace {
 
-int make_listen_fd(const tcp::Config& config) {
+ErrorStatus make_listen_fd(const tcp::Config& config, int& out_fd) noexcept {
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        throw std::runtime_error("Failed to create socket");
+        return ErrorStatus::ListenSocketCreationFailed;
     }
     int opt = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -28,36 +27,38 @@ int make_listen_fd(const tcp::Config& config) {
     addr.sin_port   = htons(static_cast<uint16_t>(config.port));
     if (::inet_pton(AF_INET, config.host.c_str(), &addr.sin_addr) <= 0) {
         ::close(fd);
-        throw std::runtime_error("Invalid host address");
+        return ErrorStatus::ListenAddressInvalid;
     }
     if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         ::close(fd);
-        throw std::runtime_error("Failed to bind");
+        return ErrorStatus::ListenSocketBindFailed;
     }
     if (::listen(fd, SOMAXCONN) < 0) {
         ::close(fd);
-        throw std::runtime_error("Failed to listen");
+        return ErrorStatus::ListenSocketListenFailed;
     }
-    return fd;
+    out_fd = fd;
+    return ErrorStatus::OK;
 }
 
-SSL_CTX* make_ssl_ctx(const tcp::Config& config) {
+ErrorStatus make_ssl_ctx(const tcp::Config& config, SSL_CTX*& out_ctx) noexcept {
     SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
     if (!ctx) {
-        throw std::runtime_error("Failed to create SSL context");
+        return ErrorStatus::TlsContextCreationFailed;
     }
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 
     if (SSL_CTX_use_certificate_file(ctx, config.cert.c_str(), SSL_FILETYPE_PEM) <= 0) {
         SSL_CTX_free(ctx);
-        throw std::runtime_error("Failed to load certificate");
+        return ErrorStatus::TlsCertificateLoadFailed;
     }
     if (SSL_CTX_use_PrivateKey_file(ctx, config.key.c_str(), SSL_FILETYPE_PEM) <= 0) {
         SSL_CTX_free(ctx);
-        throw std::runtime_error("Failed to load private key");
+        return ErrorStatus::TlsPrivateKeyLoadFailed;
     }
-    return ctx;
+    out_ctx = ctx;
+    return ErrorStatus::OK;
 }
 
 } // namespace
@@ -79,38 +80,32 @@ slim::common::io::Task<void> Tcp::accept_loop(Tcp& self, slim::common::io::Runti
     }
 }
 
-Tcp::Tcp(const tcp::Config& config,
-         slim::common::io::Runtime& runtime,
-         std::stop_token stop_token,
-         ConnectionHandler connection_handler)
-    : stop_token_(std::move(stop_token)),
-      stop_callback_(stop_token_, [this]{ ::shutdown(listen_fd_, SHUT_RDWR); }) {
+Tcp::Tcp(const tcp::Config& config, slim::common::io::Runtime& runtime, std::stop_token stop_token,
+    ConnectionHandler connection_handler)
+    : stop_token_(std::move(stop_token)), stop_callback_(stop_token_, [this]{ ::shutdown(listen_fd_, SHUT_RDWR); }) {
 
-    listen_fd_          = make_listen_fd(config);
-    ssl_ctx_            = (!config.cert.empty() && !config.key.empty()) ? make_ssl_ctx(config) : nullptr;
+    ErrorStatus status = make_listen_fd(config, listen_fd_);
+    if (status != ErrorStatus::OK) {
+        throw NetworkException(status);
+    }
+
+    if (!config.cert.empty() && !config.key.empty()) {
+        status = make_ssl_ctx(config, ssl_ctx_);
+        if (status != ErrorStatus::OK) {
+            ::close(listen_fd_);
+            listen_fd_ = -1;
+            throw NetworkException(status);
+        }
+    }
+
     connection_handler_ = std::move(connection_handler);
 
-    // Scheduler::spawn() mutates the dispatcher's internal task list and
-    // stages the first SQE directly on the dispatcher's own IO ring. Both
-    // are only safe to touch from the thread actually driving that
-    // Scheduler's run() loop -- which, once runtime.start() has been
-    // called, is the dispatcher's own jthread, not whichever thread is
-    // constructing this Tcp object. Calling spawn() directly here would
-    // race with that thread's concurrent drain()/reap() calls. Instead,
-    // use the already-thread-safe post() so the actual spawn() call runs
-    // via drain_inbox() on the dispatcher's own thread.
-    //
-    // accept_loop is a plain static function taking `self`/`runtime` by
-    // reference, not a capturing lambda -- so its coroutine frame holds
-    // real references into long-lived objects (this Tcp, and Runtime),
-    // never a pointer into a throwaway closure that dies once this post()
-    // callback returns.
     runtime.dispatcher_scheduler().post([this, &runtime]() {
         runtime.dispatcher_scheduler().spawn(accept_loop(*this, runtime));
     });
 }
 
-Tcp::~Tcp() {
+Tcp::~Tcp() noexcept {
     if (ssl_ctx_)        SSL_CTX_free(ssl_ctx_);
     if (listen_fd_ >= 0) ::close(listen_fd_);
 }
