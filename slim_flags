@@ -1,0 +1,2 @@
+CPP_FLAGS -DSLIM_TLS_ENABLED
+LD_FLAGS -lssl -lcrypto

@@ -1,0 +1,48 @@
+#pragma once
+#include <string>
+#include <functional>
+#include <stop_token>
+#include <openssl/ssl.h>
+#include <slim/common/io/runtime.h>
+#include <slim/common/io/scheduler.h>
+#include <slim/common/io/task.h>
+
+#define SLIMCOMMONNETWORKSERVERTCP_VERSION  "@SLIMCOMMONNETWORKSERVERTCP_VERSION@"
+#define SLIMCOMMONNETWORKSERVERTCP_GIT_HASH "@SLIMCOMMONNETWORKSERVERTCP_GIT_HASH@"
+
+namespace slim::common::network::server::tcp {
+    struct Config {
+        std::string host;
+        int         port{0};
+        std::string cert;
+        std::string key;
+    };
+}
+
+namespace slim::common::network::server {
+
+class Tcp {
+public:
+    using ConnectionHandler = std::function<slim::common::io::Task<void>(slim::common::io::Scheduler&, int, SSL_CTX*)>;
+
+    Tcp(const tcp::Config& config,
+        slim::common::io::Runtime& runtime,
+        std::stop_token stop_token,
+        ConnectionHandler connection_handler);
+
+    ~Tcp();
+
+    Tcp(const Tcp&)            = delete;
+    Tcp& operator=(const Tcp&) = delete;
+
+private:
+    int                listen_fd_{-1};
+    SSL_CTX*           ssl_ctx_{nullptr};
+    std::stop_token    stop_token_;
+    std::stop_callback<std::function<void()>> stop_callback_;
+    ConnectionHandler  connection_handler_;
+
+    static slim::common::io::Task<void> accept_loop(Tcp& self, slim::common::io::Runtime& runtime);
+};
+
+} // namespace slim::common::network::server
