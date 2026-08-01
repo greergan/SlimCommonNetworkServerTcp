@@ -113,6 +113,8 @@ Tcp::Tcp(const tcp::Config& config, slim::common::io::Runtime& runtime, std::sto
 Tcp::~Tcp() noexcept {
     log::trace(log::Message(__func__, "begins", __FILE__, __LINE__));
     local_stop_source_.request_stop();
+    log::debug(log::Message(__func__, "local_stop_source_ requested, shutdown listen_fd_ => " + std::to_string(listen_fd_), __FILE__, __LINE__));
+    ::shutdown(listen_fd_, SHUT_RDWR);
     if (ssl_ctx_)        SSL_CTX_free(ssl_ctx_);
     if (listen_fd_ >= 0) ::close(listen_fd_);
     log::trace(log::Message(__func__, "ends", __FILE__, __LINE__));
