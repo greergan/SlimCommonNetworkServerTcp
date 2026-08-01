@@ -67,7 +67,7 @@ ErrorStatus make_ssl_ctx(const tcp::Config& config, SSL_CTX*& out_ctx) noexcept 
 slim::common::io::Task<void> Tcp::accept_loop(Tcp& self, slim::common::io::Runtime& runtime) {
     log::trace(log::Message(__func__, "begins", __FILE__, __LINE__));
     auto& dispatcher = runtime.dispatcher_scheduler();
-    while (!self.stop_token_.stop_requested() || !stop_requested) {
+    while (!self.stop_token_.stop_requested() && !stop_requested) {
         slim::common::io::Accept accept_op{dispatcher, self.listen_fd_};
         int client_fd = co_await accept_op;
         log::debug(log::Message(__func__, "co_await returned client_fd => " + std::to_string(client_fd), __FILE__, __LINE__));
