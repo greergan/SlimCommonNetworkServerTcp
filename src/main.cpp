@@ -12,8 +12,8 @@
 #include <slim/common/log.h>
 
 namespace slim::common::network::server {
-
 using namespace slim::common;
+std::atomic<bool> stop_requested{false};
 
 namespace {
 
@@ -67,15 +67,14 @@ ErrorStatus make_ssl_ctx(const tcp::Config& config, SSL_CTX*& out_ctx) noexcept 
 slim::common::io::Task<void> Tcp::accept_loop(Tcp& self, slim::common::io::Runtime& runtime) {
     log::trace(log::Message(__func__, "begins", __FILE__, __LINE__));
     auto& dispatcher = runtime.dispatcher_scheduler();
-    while (!self.stop_token_.stop_requested()) {
+    while (!self.stop_token_.stop_requested() || !stop_requested) {
         slim::common::io::Accept accept_op{dispatcher, self.listen_fd_};
         int client_fd = co_await accept_op;
         log::debug(log::Message(__func__, "co_await returned client_fd => " + std::to_string(client_fd), __FILE__, __LINE__));
         if (client_fd < 0) continue;
         log::debug(log::Message(__func__, "posting connection handler for client_fd => " + std::to_string(client_fd), __FILE__, __LINE__));
         SSL_CTX* ctx = self.ssl_ctx_;
-        runtime.post([client_fd, ctx, &handler = self.connection_handler_](
-                         slim::common::io::Scheduler& worker_scheduler, size_t) {
+        runtime.post([client_fd, ctx, &handler = self.connection_handler_](slim::common::io::Scheduler& worker_scheduler, size_t) {
             auto conn = handler(worker_scheduler, client_fd, ctx);
             worker_scheduler.spawn(std::move(conn));
         });
@@ -115,6 +114,7 @@ Tcp::~Tcp() noexcept {
     log::trace(log::Message(__func__, "begins", __FILE__, __LINE__));
     if (ssl_ctx_)        SSL_CTX_free(ssl_ctx_);
     if (listen_fd_ >= 0) ::close(listen_fd_);
+    stop_requested = true;
     log::trace(log::Message(__func__, "ends", __FILE__, __LINE__));
 }
 
