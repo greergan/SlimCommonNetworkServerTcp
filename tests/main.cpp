@@ -260,3 +260,37 @@ TEST_CASE("Tcp server handler runs on a worker Scheduler distinct from dispatche
     source.request_stop();
     runtime.stop();
 }
+
+TEST_CASE("Tcp server accept_loop does not dispatch after Tcp destruction", "[tcp][server]") {
+    Runtime runtime(2);
+    runtime.start();
+
+    std::atomic<int> handler_count{0};
+
+    std::stop_source source;
+
+    {
+        tcp::Config config{"127.0.0.1", 19957, {}, {}};
+        Tcp server(config, runtime, source.get_token(), [&](Scheduler&, int fd, SSL_CTX*) -> Task<void> {
+            handler_count.fetch_add(1);
+            ::close(fd);
+            co_return;
+        });
+
+        std::this_thread::sleep_for(50ms);
+        int c1 = connect_to(19957);
+        REQUIRE(c1 >= 0);
+        std::this_thread::sleep_for(100ms);
+        REQUIRE(handler_count.load() == 1);
+        ::close(c1);
+    } // Tcp destructs here
+
+    std::this_thread::sleep_for(100ms);
+    int c2 = connect_to(19957);
+    std::this_thread::sleep_for(100ms);
+    if (c2 >= 0) ::close(c2);
+
+    REQUIRE(handler_count.load() == 1);
+
+    runtime.stop();
+}

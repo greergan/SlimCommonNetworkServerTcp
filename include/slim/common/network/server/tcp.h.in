@@ -37,7 +37,8 @@ public:
 private:
     int                listen_fd_{-1};
     SSL_CTX*           ssl_ctx_{nullptr};
-    std::stop_token    stop_token_;
+    std::stop_token    system_stop_token_; // owned by the application
+    std::stop_source   local_stop_source_;  // the server object local
     std::stop_callback<std::function<void()>> stop_callback_;
     ConnectionHandler  connection_handler_;
 
