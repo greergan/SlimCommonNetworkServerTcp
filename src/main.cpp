@@ -65,12 +65,14 @@ ErrorStatus make_ssl_ctx(const tcp::Config& config, SSL_CTX*& out_ctx) noexcept 
 slim::common::io::Task<void> Tcp::accept_loop(Tcp& self, slim::common::io::Runtime& runtime) {
     log::trace(log::Message(__func__, "begins", __FILE__, __LINE__));
     auto& dispatcher = runtime.dispatcher_scheduler();
-    while (!self.system_stop_token_.stop_requested() && !self.local_stop_source_.stop_requested()) {
+    auto system_token = self.system_stop_token_;
+    auto local_token  = self.local_stop_source_.get_token();
+    while (!system_token.stop_requested() && !local_token.stop_requested()) {
         slim::common::io::Accept accept_op{dispatcher, self.listen_fd_};
         int client_fd = co_await accept_op;
-        if (self.system_stop_token_.stop_requested() || self.local_stop_source_.stop_requested()) break;
+        if (system_token.stop_requested() || local_token.stop_requested()) break;
         log::debug(log::Message(__func__, "co_await returned client_fd => " + std::to_string(client_fd), __FILE__, __LINE__));
-        if (client_fd < 0) continue;
+        if (client_fd < 0) break;
         log::debug(log::Message(__func__, "posting connection handler for client_fd => " + std::to_string(client_fd), __FILE__, __LINE__));
         SSL_CTX* ctx = self.ssl_ctx_;
         auto handler_copy = self.connection_handler_;
